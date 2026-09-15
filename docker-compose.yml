@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  vg-ms-sigrc-medical-histories:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jesushuaripaucarcardenas/ms-medical-history:latest
+
+    container_name: vg-ms-sigrc-medical-histories
+    pull_policy: always
+    mem_limit: 500m
+    restart: unless-stopped
+    ports:
+      - "9091:9091"
+    environment:
+      # Configuración del servidor
+      - SERVER_PORT=9091
+
+      # Conexión a Supabase PostgreSQL (pooler), vía pgbouncer
+      # Credenciales reales solo en el .env local (no versionado) o en secrets del orquestador.
+      - DB_R2DBC_URL=r2dbcs:postgresql://aws-0-us-west-2.pooler.supabase.com:6543/postgres?sslMode=require&preparedStatementCacheQueries=0
+      - DB_USERNAME=${DB_USERNAME}
+      - DB_PASSWORD=${DB_PASSWORD}
+
+      # Flyway (JDBC)
+      - DB_JDBC_URL=jdbc:postgresql://aws-0-us-west-2.pooler.supabase.com:6543/postgres?sslmode=require&pgbouncer=true&prepareThreshold=0
+
+      # URLs de microservicios (ajusta según tu gateway)
+      - SERVICES_PATIENTS_URL=https://lab.vallegrande.edu.pe/sigrc/gateway/api/v1/patients
+      - SERVICES_DOCTORS_URL=https://lab.vallegrande.edu.pe/sigrc/gateway/api/v1/doctors
+      - SERVICES_APPOINTMENTS_URL=https://lab.vallegrande.edu.pe/sigrc/gateway/api/v1/appointments
+      - SERVICES_SPECIALTIES_URL=https://lab.vallegrande.edu.pe/sigrc/gateway/api/v1/specialties
+
+      # Logging
+      - LOGGING_LEVEL_PE_EDU_VALLEGRANDE_SIGRC_MEDICALHISTORY=INFO
+
+      # Management
+      - MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=health,info,metrics
+      - MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS=always
+    networks:
+      - sigrc-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9091/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+networks:
+  sigrc-network:
+    external: true

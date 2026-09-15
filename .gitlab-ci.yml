@@ -1,0 +1,171 @@
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+  MAVEN_CLI_OPTS: "--batch-mode --errors --fail-at-end"
+  DOCKER_IMAGE: jesushuaripaucarcardenas/ms-medical-history
+  CONTAINER_NAME: vg-ms-sigrc-medical-histories
+
+stages:
+  - build
+  - test
+  - docker
+
+# ─────────────────────────────────────────────
+# CACHE MAVEN
+# ─────────────────────────────────────────────
+.maven-cache: &maven-cache
+  cache:
+    key:
+      files:
+        - pom.xml
+    paths:
+      - .m2/repository
+
+# ─────────────────────────────────────────────
+# BUILD
+# ─────────────────────────────────────────────
+build:
+  stage: build
+  image: maven:3.9.6-eclipse-temurin-17-alpine
+  <<: *maven-cache
+  script:
+    - echo "==> Compilando ms-medical-history..."
+    - mvn $MAVEN_CLI_OPTS clean compile
+  artifacts:
+    paths:
+      - target/
+    expire_in: 1 hour
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
+# ─────────────────────────────────────────────
+# TEST
+# ─────────────────────────────────────────────
+test:
+  stage: test
+  image: maven:3.9.6-eclipse-temurin-17-alpine
+  <<: *maven-cache
+  script:
+    - echo "==> Ejecutando tests..."
+    - mvn $MAVEN_CLI_OPTS test
+  artifacts:
+    when: always
+    reports:
+      junit:
+        - target/surefire-reports/TEST-*.xml
+    expire_in: 7 days
+  needs:
+    - build
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
+# ─────────────────────────────────────────────
+# PACKAGE
+# ─────────────────────────────────────────────
+package:
+  stage: test
+  image: maven:3.9.6-eclipse-temurin-17-alpine
+  <<: *maven-cache
+  script:
+    - echo "==> Empaquetando JAR..."
+    - mvn $MAVEN_CLI_OPTS package -DskipTests
+  artifacts:
+    paths:
+      - target/*.jar
+    expire_in: 1 hour
+  needs:
+    - build
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
+# ─────────────────────────────────────────────
+# DOCKER BUILD & PUSH
+# ─────────────────────────────────────────────
+docker:
+  stage: docker
+  image: docker:26-cli
+  services:
+    - docker:26-dind
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - echo "==> Login en Docker Hub..."
+    - echo "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USER" --password-stdin
+
+  script:
+    - echo "==> Construyendo imagen Docker..."
+    - |
+      docker build \
+        --build-arg JAR_FILE=target/*.jar \
+        --tag $DOCKER_IMAGE:$CI_COMMIT_SHORT_SHA \
+        --tag $DOCKER_IMAGE:latest \
+        .
+
+    - echo "==> Publicando imagen..."
+    - docker push $DOCKER_IMAGE:$CI_COMMIT_SHORT_SHA
+    - docker push $DOCKER_IMAGE:latest
+
+  after_script:
+    - docker logout
+
+  needs:
+    - package
+
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+
+  environment:
+    name: $CI_COMMIT_BRANCH
+    url: https://lab.vallegrande.edu.pe/sigrc/gateway/api/v1/medical-histories
+
+# ─────────────────────────────────────────────
+# DEPLOY PRODUCCIÓN
+# ─────────────────────────────────────────────
+deploy:
+  stage: docker
+  image: docker:26-cli
+  services:
+    - docker:26-dind
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+
+  before_script:
+    - echo "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USER" --password-stdin
+
+  script:
+    - echo "==> Desplegando ms-medical-history..."
+    - docker pull $DOCKER_IMAGE:latest
+
+    - docker rm -f ms-medical-history 2>/dev/null || true
+    - docker rm -f vg-ms-sigrc-medical-history 2>/dev/null || true
+    - docker rm -f $CONTAINER_NAME 2>/dev/null || true
+
+    - |
+      docker run -d \
+        --name $CONTAINER_NAME \
+        --network sigrc-network \
+        --restart unless-stopped \
+        -p 9091:9091 \
+        -e SERVER_PORT=9091 \
+        -e DB_R2DBC_URL=$R2DBC_URL \
+        -e DB_USERNAME=$R2DBC_USERNAME \
+        -e DB_PASSWORD=$R2DBC_PASSWORD \
+        -e DB_JDBC_URL=$FLYWAY_URL \
+        -e SERVICES_PATIENTS_URL=$SERVICES_PATIENTS_URL \
+        -e SERVICES_DOCTORS_URL=$SERVICES_DOCTORS_URL \
+        -e SERVICES_APPOINTMENTS_URL=$SERVICES_APPOINTMENTS_URL \
+        -e SERVICES_SPECIALTIES_URL=$SERVICES_SPECIALTIES_URL \
+        $DOCKER_IMAGE:latest
+
+  after_script:
+    - docker logout
+
+  needs:
+    - docker
+
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+  environment:
+    name: production
+    url: https://lab.vallegrande.edu.pe/sigrc/gateway/api/v1/medical-histories

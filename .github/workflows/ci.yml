@@ -1,0 +1,50 @@
+name: CI - Pruebas y Cobertura (ms-medical-history)
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    name: Unit tests + parametrizadas + JaCoCo
+    runs-on: ubuntu-latest
+    env:
+      # La suite de tests no requiere una base de datos real (R2DBC pool con
+      # initial-size:0 + Flyway deshabilitado en @SpringBootTest), pero Spring
+      # exige que las propiedades existan para poder construir el contexto.
+      # En un repo real, DB_USERNAME/DB_PASSWORD se configuran como secrets
+      # del repositorio (Settings > Secrets and variables > Actions).
+      DB_USERNAME: ${{ secrets.DB_USERNAME || 'ci_dummy_user' }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD || 'ci_dummy_password' }}
+
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar JDK 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Ejecutar pruebas unitarias y parametrizadas
+        run: mvn -B test
+
+      - name: Generar reporte de cobertura JaCoCo
+        run: mvn -B jacoco:report
+
+      - name: Publicar reporte de cobertura como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report-ms-medical-history
+          path: target/site/jacoco/
+
+      - name: Publicar resultados de pruebas
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports-ms-medical-history
+          path: target/surefire-reports/

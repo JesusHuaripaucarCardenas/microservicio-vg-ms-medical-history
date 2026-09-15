@@ -1,0 +1,64 @@
+server:
+  port: ${SERVER_PORT:9091}
+
+spring:
+  application:
+    name: ms-medical-history
+
+  # R2DBC - Conexión reactiva con Supabase PostgreSQL (pooler)
+  # Credenciales inyectadas por variable de entorno / GitHub Actions secret — nunca hardcodeadas en el repo.
+  r2dbc:
+    url: ${R2DBC_URL:r2dbcs:postgresql://aws-0-us-west-2.pooler.supabase.com:6543/postgres?sslMode=require&preparedStatementCacheQueries=0}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    pool:
+      initial-size: 0
+      max-size: 5
+      max-idle-time: 5m
+      max-life-time: 30m
+      validation-query: SELECT 1
+
+  # Flyway - Migraciones con JDBC
+  flyway:
+    url: ${FLYWAY_URL:jdbc:postgresql://aws-0-us-west-2.pooler.supabase.com:6543/postgres?sslmode=require&pgbouncer=true&prepareThreshold=0}
+    user: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    enabled: ${FLYWAY_ENABLED:true}
+
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER_URI:https://lab.vallegrande.edu.pe/sigrc/keycloak/realms/PRS04}
+
+# ── Microservicios externos ────────────────────────────────────────────────────
+services:
+  patients:
+    url: ${SERVICES_PATIENTS_URL:https://lab.vallegrande.edu.pe/sigrc/gateway/api/v1/patients}
+  doctors:
+    url: ${SERVICES_DOCTORS_URL:https://lab.vallegrande.edu.pe/sigrc/gateway/api/v1/doctors}
+  appointments:
+    url: ${SERVICES_APPOINTMENTS_URL:https://lab.vallegrande.edu.pe/sigrc/gateway/api/v1/appointments}
+  specialties:
+    url: ${SERVICES_SPECIALTIES_URL:https://lab.vallegrande.edu.pe/sigrc/gateway/api/v1/specialties}
+
+logging:
+  level:
+    pe.edu.vallegrande.sigrc.medicalhistory: INFO
+    io.r2dbc.postgresql: INFO
+    org.springframework.data.r2dbc: INFO
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
